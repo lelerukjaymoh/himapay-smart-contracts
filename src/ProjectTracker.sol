@@ -28,21 +28,36 @@ contract ProjectTracker is
         Cancelled
     }
 
+    enum MilestoneStatus {
+        InProgress,
+        Completed,
+        Cancelled
+    }
+
     struct Project {
         uint256 deadline;
         uint256 createdAt;
         uint256 updatedAt;
         uint256 completedAt;
-        uint64 projectId;
-        uint64 totalTasks;
-        uint64 clientId;
-        uint64 developerId;
+        uint256 projectId;
+        uint256 clientId;
+        uint256 developerId;
         uint64 totalTasksCompleted;
+        uint64 totalTasks;
         ProjectStatus status;
         uint256 cost;
     }
 
-    mapping(uint64 => Project) public projects;
+    struct ProjectMilestone {
+        uint256 milestoneId;
+        Project projectId;
+        uint256 createdAt;
+        uint256 updatedAt;
+        MilestoneStatus status;
+    }
+
+    mapping(uint256 => Project) public projects;
+    mapping(uint256 => ProjectMilestone) public projectMilestones;
 
     /*///////////////////////////////////////////////////////////////
                             Initializer
@@ -67,23 +82,29 @@ contract ProjectTracker is
     //////////////////////////////////////////////////////////////*/
 
     event NewProject(
-        uint64 projectId,
+        uint256 projectId,
         uint256 deadline,
         uint256 createdAt,
         uint256 updatedAt,
         uint256 completedAt,
         uint64 totalTasks,
-        uint64 clientId,
-        uint64 developerId,
+        uint256 clientId,
+        uint256 developerId,
         uint64 totalTasksCompleted,
         ProjectStatus status,
         uint256 cost
     );
 
+    event MilestoneCompleted(
+        uint256 milestoneId,
+        uint256 updatedAt,
+        MilestoneStatus status
+    );
+
     /*///////////////////////////////////////////////////////////////
                             Modifiers
     //////////////////////////////////////////////////////////////*/
-    modifier isNewProject(uint64 _projectId) {
+    modifier isNewProject(uint256 _projectId) {
         require(
             projects[_projectId].projectId == 0,
             "Project with this ID already exists"
@@ -93,6 +114,30 @@ contract ProjectTracker is
 
     modifier validDeadline(uint256 _deadline) {
         require(_deadline > block.timestamp, "Deadline cannot be in the past");
+        _;
+    }
+
+    modifier milestoneExists(uint256 _milestoneId) {
+        require(
+            projectMilestones[_milestoneId].milestoneId != 0,
+            "Milestone with this ID does not exist"
+        );
+        _;
+    }
+
+    modifier milestoneNotCompleted(uint256 _milestoneId) {
+        require(
+            projectMilestones[_milestoneId].status != MilestoneStatus.Completed,
+            "Milestone with this ID has already been completed"
+        );
+        _;
+    }
+
+    modifier milestoneDoesNotExist(uint256 _milestoneId) {
+        require(
+            projectMilestones[_milestoneId].milestoneId == 0,
+            "Milestone with this ID already exists"
+        );
         _;
     }
 
@@ -121,14 +166,15 @@ contract ProjectTracker is
     }
 
     function createProject(
-        uint64 _projectId,
-        uint64 _deadline,
-        uint64 _updatedAt,
-        uint64 _completedAt,
+        uint256 _projectId,
+        uint256 _deadline,
+        uint256 _updatedAt,
+        uint256 _completedAt,
         uint64 _totalTasks,
         uint64 _clientId,
         uint64 _developerId,
-        uint64 _cost
+        uint64 _cost,
+        uint[] memory _milestones
     )
         external
         onlyRole(ADMIN_ROLE)
@@ -155,6 +201,15 @@ contract ProjectTracker is
 
         if (_developerId != 0) {
             _grantRole(DEVELOPER_ROLE, msg.sender);
+        }
+
+        uint totalMilestones = _milestones.length;
+        for (uint i; i < totalMilestones; ) {
+            _createMilestone(_milestones[i], _projectId);
+
+            unchecked {
+                ++i;
+            }
         }
 
         Project memory project = Project({
@@ -184,5 +239,57 @@ contract ProjectTracker is
             project.status,
             project.cost
         );
+    }
+
+    /*
+                            Milestone functions
+    //////////////////////////////////////////////////////////////*/
+    function completeMilestone(
+        uint milestoneId
+    )
+        external
+        onlyRole(ADMIN_ROLE)
+        milestoneExists(milestoneId)
+        milestoneNotCompleted(milestoneId)
+    {
+        ProjectMilestone storage milestone = projectMilestones[milestoneId];
+
+        milestone.status = MilestoneStatus.Completed;
+        milestone.updatedAt = block.timestamp;
+
+        emit MilestoneCompleted(
+            milestone.milestoneId,
+            milestone.updatedAt,
+            milestone.status
+        );
+    }
+
+    function createMilestone(
+        uint256 _milestoneId,
+        uint256 _projectId
+    ) external milestoneDoesNotExist(_milestoneId) onlyRole(ADMIN_ROLE) {
+        _createMilestone(_milestoneId, _projectId);
+    }
+
+    /*///////////////////////////////////////////////////////////////
+                            Internal functions
+    //////////////////////////////////////////////////////////////*/
+
+    function _createMilestone(
+        uint256 _milestoneId,
+        uint projectId
+    ) internal milestoneDoesNotExist(_milestoneId) {
+        if (_milestoneId == 0)
+            revert RevertWithError("Milestone ID cannot be 0");
+
+        ProjectMilestone memory milestone = ProjectMilestone({
+            milestoneId: _milestoneId,
+            projectId: projects[projectId],
+            createdAt: block.timestamp,
+            updatedAt: block.timestamp,
+            status: MilestoneStatus.InProgress
+        });
+
+        projectMilestones[_milestoneId] = milestone;
     }
 }
