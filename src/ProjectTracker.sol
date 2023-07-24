@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.19;
 
-import {Initializable} from "@openzeppelin-contracts-upgradeable/proxy/utils/Initializable.sol";
-import {PausableUpgradeable} from "@openzeppelin-contracts-upgradeable/security/PausableUpgradeable.sol";
-import {AccessControlUpgradeable} from "@openzeppelin-contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {Initializable} from "@openzeppelin-upgradeable/proxy/utils/Initializable.sol";
+import {PausableUpgradeable} from "@openzeppelin-upgradeable/security/PausableUpgradeable.sol";
+import {AccessControlUpgradeable} from "@openzeppelin-upgradeable/access/AccessControlUpgradeable.sol";
 
 contract ProjectTracker is
     Initializable,
@@ -16,8 +16,6 @@ contract ProjectTracker is
 
     // @dev the Role that allows a user to pause or unpause the contract
     bytes32 public immutable PAUSER_ROLE = keccak256("PAUSER_ROLE");
-    bytes32 public immutable CLIENT_ROLE = keccak256("CLIENT_ROLE");
-    bytes32 public immutable DEVELOPER_ROLE = keccak256("DEVELOPER_ROLE");
     bytes32 public immutable ADMIN_ROLE = keccak256("ADMIN_ROLE");
 
     error RevertWithError(string reason);
@@ -99,6 +97,26 @@ contract ProjectTracker is
         uint256 milestoneId,
         uint256 updatedAt,
         MilestoneStatus status
+    );
+
+    event NewMilestone(
+        uint256 milestoneId,
+        Project projectId,
+        uint256 createdAt
+    );
+
+    event MilestoneDeleted(uint256 milestoneId);
+
+    event ProjectClientChanged(
+        uint256 previousClientId,
+        uint256 newClientId,
+        uint256 projectId
+    );
+
+    event ProjectDeveloperChanged(
+        uint256 previousDeveloperId,
+        uint256 newDeveloperId,
+        uint256 projectId
     );
 
     /*///////////////////////////////////////////////////////////////
@@ -195,14 +213,6 @@ contract ProjectTracker is
 
         if (_cost == 0) revert RevertWithError("Cost cannot be 0");
 
-        if (_clientId != 0) {
-            _grantRole(CLIENT_ROLE, msg.sender);
-        }
-
-        if (_developerId != 0) {
-            _grantRole(DEVELOPER_ROLE, msg.sender);
-        }
-
         uint totalMilestones = _milestones.length;
         for (uint i; i < totalMilestones; ) {
             _createMilestone(_milestones[i], _projectId);
@@ -245,7 +255,8 @@ contract ProjectTracker is
                             Milestone functions
     //////////////////////////////////////////////////////////////*/
     function completeMilestone(
-        uint milestoneId
+        uint milestoneId,
+        uint projectId
     )
         external
         onlyRole(ADMIN_ROLE)
@@ -256,6 +267,20 @@ contract ProjectTracker is
 
         milestone.status = MilestoneStatus.Completed;
         milestone.updatedAt = block.timestamp;
+
+        // Update project
+        Project storage project = projects[projectId];
+
+        /// @dev possibility of an overflow is low, but still possible
+        unchecked {
+            project.totalTasksCompleted += 1;
+        }
+
+        if (project.totalTasksCompleted == project.totalTasks) {
+            project.status = ProjectStatus.Completed;
+        }
+
+        project.completedAt = block.timestamp;
 
         emit MilestoneCompleted(
             milestone.milestoneId,
@@ -269,6 +294,53 @@ contract ProjectTracker is
         uint256 _projectId
     ) external milestoneDoesNotExist(_milestoneId) onlyRole(ADMIN_ROLE) {
         _createMilestone(_milestoneId, _projectId);
+    }
+
+    function deleteMilestone(
+        uint milestoneId
+    ) external onlyRole(ADMIN_ROLE) milestoneExists(milestoneId) {
+        delete projectMilestones[milestoneId];
+
+        emit MilestoneDeleted(milestoneId);
+    }
+
+    /*
+                            Project functions
+    //////////////////////////////////////////////////////////////*/
+    function getProjectProgress(
+        uint projectId
+    ) external view returns (uint64, uint64) {
+        Project storage project = projects[projectId];
+
+        return (project.totalTasksCompleted, project.totalTasks);
+    }
+
+    function updateProjectClient(
+        uint projectId,
+        uint newClientId
+    ) external onlyRole(ADMIN_ROLE) {
+        Project storage project = projects[projectId];
+        uint previousClientId = project.clientId;
+
+        project.clientId = newClientId;
+
+        emit ProjectClientChanged(previousClientId, newClientId, projectId);
+    }
+
+    function updateProjectDeveloper(
+        uint projectId,
+        uint newDeveloperId
+    ) external onlyRole(ADMIN_ROLE) {
+        Project storage project = projects[projectId];
+        uint previousDeveloperId = project.developerId;
+
+        project.developerId = newDeveloperId;
+
+        emit ProjectDeveloperChanged(
+            previousDeveloperId,
+            newDeveloperId,
+            projectId
+        );
     }
 
     /*///////////////////////////////////////////////////////////////
@@ -291,5 +363,11 @@ contract ProjectTracker is
         });
 
         projectMilestones[_milestoneId] = milestone;
+
+        emit NewMilestone(
+            milestone.milestoneId,
+            milestone.projectId,
+            milestone.createdAt
+        );
     }
 }
